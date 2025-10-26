@@ -51,7 +51,6 @@ class LukrumModelsAPIClient(BaseAPIClient):
         """Get the API version."""
         return "1.0.0"
     
-    
     # Models endpoints
     
     def get_models(self, 

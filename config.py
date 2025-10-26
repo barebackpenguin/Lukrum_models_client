@@ -19,6 +19,16 @@ class ModelsAPIConfig(BaseAPIConfig):
     max_retries: int = 3
     verify_ssl: bool = False  # Set to False for self-signed certificates
     
+    def get_auth_header(self) -> str:
+        """Get the authorization header value."""
+        if self.api_token:
+            return f'{self.api_token}'
+        elif self.api_key:
+            return f'{self.api_key}'
+        else:
+            raise ValueError("No API key or token available")
+    
+    
     def __post_init__(self):
         """Load configuration from environment variables if not provided."""
         # Load API key from environment if not provided
