@@ -11,7 +11,7 @@ from email.utils import parsedate_to_datetime
 import logging
 
 from lukrum_lib.shared_api.base_client import BaseAPIClient
-from lukrum_lib.enums import Instrument, str_to_instrument
+from lukrum_lib.enums import Instrument, str_to_instrument, TradeType
 from .config import ModelsAPIConfig
 from lukrum_lib.dto.models_api_dto import (
     Model, Observation, Property, PropertyType, TradeHistory,
@@ -457,6 +457,17 @@ class LukrumModelsAPIClient(BaseAPIClient):
                     except Exception:
                         # If instrument string is invalid, drop the field to avoid constructor errors
                         td.pop('instrument', None)
+            # Deserialize trade_type to enum if present
+            tt_val = td.get('trade_type')
+            if tt_val is not None and not isinstance(tt_val, TradeType):
+                if isinstance(tt_val, str):
+                    try:
+                        td['trade_type'] = TradeType(tt_val)
+                    except Exception:
+                        try:
+                            td['trade_type'] = TradeType[tt_val]
+                        except Exception:
+                            pass
             if hasattr(TradeHistory, 'from_dict'):
                 parsed_trades.append(TradeHistory.from_dict(td))
             else:
@@ -572,7 +583,7 @@ class LukrumModelsAPIClient(BaseAPIClient):
                     "entry_granularity": meta.get("entry_granularity"),
                     "ts": t.ts_open,
                     "type": "open",
-                    "trade": t.trade_type,
+                    "trade": t.trade_type if isinstance(t.trade_type, TradeType) else t.trade_type,
                     "tp": t.tp_price,
                     "sl": t.sl_price,
                     "price": t.open_price,
@@ -587,7 +598,7 @@ class LukrumModelsAPIClient(BaseAPIClient):
                     "entry_granularity": meta.get("entry_granularity"),
                     "ts": t.ts_close,
                     "type": "close",
-                    "trade": t.trade_type,
+                    "trade": t.trade_type if isinstance(t.trade_type, TradeType) else t.trade_type,
                     "tp": 0.0,
                     "sl": 0.0,
                     "price": t.close_price,
