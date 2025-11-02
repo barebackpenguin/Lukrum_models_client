@@ -17,9 +17,7 @@ except ImportError:
 
 def main() -> int:
     api_key = os.getenv("LUKRUM_MODELS_API_KEY")
-    print(api_key)
     base_url = os.getenv("LUKRUM_MODELS_BASE_URL", ModelsAPIConfig().base_url)
-    print(base_url)
 
     if not api_key:
         print("Error: LUKRUM_MODELS_API_KEY environment variable is not set.")
@@ -29,14 +27,27 @@ def main() -> int:
     config = ModelsAPIConfig(base_url=base_url, api_key=api_key)
 
     # Use context manager to ensure clean session closing
+    # with LukrumModelsAPIClient(config=config) as client:
+    #     models = client.get_models()
+    #     print(f"Total models: {len(models)}")
+    #     for m in models[:5]:
+    #         name = getattr(m, "name", None)
+    #         uuid = getattr(m, "model_uuid", None)
+    #         print(f"- {name} (uuid={uuid})")
     with LukrumModelsAPIClient(config=config) as client:
-        models = client.get_models()
-        print(f"Total models: {len(models)}")
-        for m in models[:5]:
-            name = getattr(m, "name", None)
-            uuid = getattr(m, "model_uuid", None)
-            print(f"- {name} (uuid={uuid})")
-
+        models = client.get_trade_events(uuids=["57d9f08c-11fe-4ba0-9d10-980aacd55940"])
+        print(f"Total trades: {len(models)}")
+        for m in models:
+            instrument = m.get("instrument")
+            print(instrument.name)
+            print(m.get("entry_granularity"))
+            print(m.get("ts"))
+            print(m.get("type"))
+            print(m.get("trade"))
+            print(m.get("tp"))
+            print(m.get("sl"))
+            print(m.get("price"))
+            print(m.get("pip"))
     return 0
 
 

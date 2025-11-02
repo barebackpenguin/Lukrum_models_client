@@ -11,6 +11,7 @@ from email.utils import parsedate_to_datetime
 import logging
 
 from lukrum_lib.shared_api.base_client import BaseAPIClient
+from lukrum_lib.enums import Instrument, str_to_instrument
 from .config import ModelsAPIConfig
 from lukrum_lib.dto.models_api_dto import (
     Model, Observation, Property, PropertyType, TradeHistory,
@@ -445,6 +446,17 @@ class LukrumModelsAPIClient(BaseAPIClient):
             td = dict(trade_data)
             td['ts_open'] = _parse_ts(td.get('ts_open'))
             td['ts_close'] = _parse_ts(td.get('ts_close'))
+            # Deserialize instrument to enum if present
+            instr_val = td.get('instrument')
+            if instr_val is not None:
+                if isinstance(instr_val, Instrument):
+                    pass
+                elif isinstance(instr_val, str):
+                    try:
+                        td['instrument'] = str_to_instrument(instr_val)
+                    except Exception:
+                        # If instrument string is invalid, drop the field to avoid constructor errors
+                        td.pop('instrument', None)
             if hasattr(TradeHistory, 'from_dict'):
                 parsed_trades.append(TradeHistory.from_dict(td))
             else:
@@ -485,13 +497,21 @@ class LukrumModelsAPIClient(BaseAPIClient):
             f"get_trade_events: start; active={active}, start={start}, chunk_size={chunk_size}, max_workers={max_workers}"
         )
         models = self.get_models(active=active, uuids=uuids)
-        id_to_meta = {
-            m.id: {
-                "instrument": m.instrument,
+        id_to_meta = {}
+        for m in models:
+            if m.id is None:
+                continue
+            inst = getattr(m, "instrument", None)
+            # Convert to Instrument enum if a string
+            if isinstance(inst, str):
+                try:
+                    inst = str_to_instrument(inst)
+                except Exception:
+                    pass
+            id_to_meta[m.id] = {
+                "instrument": inst,
                 "entry_granularity": m.entry_granularity,
             }
-            for m in models if m.id is not None
-        }
         total_models = len(id_to_meta)
         logger.info(f"get_trade_events: {total_models} models to process")
 
