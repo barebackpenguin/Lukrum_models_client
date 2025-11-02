@@ -6,6 +6,9 @@ Provides methods for all endpoints including models, observations, properties, a
 """
 
 from typing import Optional, List, Dict, Any
+from datetime import datetime
+from email.utils import parsedate_to_datetime
+import logging
 
 from lukrum_lib.shared_api.base_client import BaseAPIClient
 from .config import ModelsAPIConfig
@@ -15,15 +18,9 @@ from lukrum_lib.dto.models_api_dto import (
     ModelCreateRequest, ModelUpdateRequest,
     ObservationCreateRequest, ObservationUpdateRequest,
     PropertyCreateRequest, PropertyUpdateRequest,
-)
-from lukrum_lib.shared_api.exceptions import (
-    LukrumAPIError as APIRequestException,
-    AuthenticationError as AuthenticationException,
-    ValidationError as ValidationException,
-    NotFoundError as NotFoundException,
-    RateLimitError as RateLimitException,
-)
+) 
 
+logger = logging.getLogger(__name__)
 
 class LukrumModelsAPIClient(BaseAPIClient):
     """
@@ -83,7 +80,7 @@ class LukrumModelsAPIClient(BaseAPIClient):
         response = self._make_request('GET', '/models', params=params)
         models_data = response.get('models', [])
         
-        return [Model(**model_data) for model_data in models_data]
+        return [Model.from_dict(model_data) if hasattr(Model, 'from_dict') else Model(**model_data) for model_data in models_data]
     
     def create_model(self, model_request: ModelCreateRequest) -> Dict[str, Any]:
         """
@@ -108,7 +105,9 @@ class LukrumModelsAPIClient(BaseAPIClient):
             Model object
         """
         response = self._make_request('GET', f'/models/{uuid}')
-        return Model(**response)
+        # Swagger shows a wrapper: { "message": str, "model": Model }
+        model_payload = response.get('model', response)
+        return Model.from_dict(model_payload) if hasattr(Model, 'from_dict') else Model(**model_payload)
     
     def update_model(self, model_id: int, update_request: ModelUpdateRequest) -> Dict[str, Any]:
         """
@@ -377,7 +376,13 @@ class LukrumModelsAPIClient(BaseAPIClient):
             order: Order direction (asc/desc)
             
         Returns:
-            TradeHistoryResponse object
+            TradeHistoryResponse object. Each TradeHistory entry may include:
+            - id, model_id, model_uuid
+            - trade_type (LONG/SHORT), trade_result (TP/SL)
+            - ts_open, ts_close
+            - open_price, close_price
+            - tp_price, sl_price
+            - pips, balance, score
         """
         params = {}
         if model_id is not None:
@@ -416,13 +421,38 @@ class LukrumModelsAPIClient(BaseAPIClient):
             params['order'] = order
         
         response = self._make_request('GET', '/trade-history', params=params)
-        
+
+        def _parse_ts(value: Optional[str]) -> Optional[datetime]:
+            if value is None:
+                return None
+            if isinstance(value, datetime):
+                return value
+            # Try RFC1123 / RFC2822 (e.g., "Fri, 24 Oct 2025 16:00:00 GMT")
+            try:
+                return parsedate_to_datetime(value)
+            except Exception:
+                pass
+            # Fallback to ISO8601 (with potential trailing Z)
+            try:
+                return datetime.fromisoformat(value.replace('Z', '+00:00'))
+            except Exception:
+                return None
+
         trades_data = response.get('trades', [])
-        trades = [TradeHistory(**trade_data) for trade_data in trades_data]
+        parsed_trades: List[TradeHistory] = []
+        for trade_data in trades_data:
+            # Copy to avoid mutating original
+            td = dict(trade_data)
+            td['ts_open'] = _parse_ts(td.get('ts_open'))
+            td['ts_close'] = _parse_ts(td.get('ts_close'))
+            if hasattr(TradeHistory, 'from_dict'):
+                parsed_trades.append(TradeHistory.from_dict(td))
+            else:
+                parsed_trades.append(TradeHistory(**td))
         
         return TradeHistoryResponse(
             count=response.get('count', 0),
-            trades=trades
+            trades=parsed_trades
         )
     
     def get_model_stats(self, model_id: int) -> ModelStats:
@@ -438,3 +468,137 @@ class LukrumModelsAPIClient(BaseAPIClient):
         response = self._make_request('GET', f'/trade-history/stats/{model_id}')
         return ModelStats(**response)
     
+    def get_trade_events(self,
+                              active: int = 1,
+                              uuids: Optional[List[str]] = None,
+                              start: str = "2021-01-01",
+                              chunk_size: int = 2000,
+                              max_workers: int = 8) -> List[Dict[str, Any]]:
+        """
+        Build a dataset equivalent to the SQL union used in notebooks, using the API.
+
+        Returns rows with keys: model, instrument, entry_granularity, ts, type,
+        trade, tp, sl, price, pip.
+        """
+        # Fetch models (active or inactive as requested)
+        logger.info(
+            f"get_trade_events: start; active={active}, start={start}, chunk_size={chunk_size}, max_workers={max_workers}"
+        )
+        models = self.get_models(active=active, uuids=uuids)
+        id_to_meta = {
+            m.id: {
+                "instrument": m.instrument,
+                "entry_granularity": m.entry_granularity,
+            }
+            for m in models if m.id is not None
+        }
+        total_models = len(id_to_meta)
+        logger.info(f"get_trade_events: {total_models} models to process")
+
+        # To avoid cross-thread sharing of a requests.Session, each worker will
+        # create its own client instance using the same config.
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def fetch_model_rows(model_id: int, meta: Dict[str, Any]) -> List[Dict[str, Any]]:
+            # Local import to avoid circulars and keep scope minimal
+            # Create a per-thread client (separate HTTP session)
+            child_client = type(self)(self.config)
+            open_rows_count = 0
+            close_rows_count = 0
+
+            def iter_by_open(inner_model_id: int):
+                offset_local = 0
+                while True:
+                    resp_local = child_client.get_trade_history(
+                        model_id=inner_model_id,
+                        ts_open_start=start,
+                        limit=chunk_size,
+                        offset=offset_local,
+                        order_by="ts_open",
+                        order="asc",
+                    )
+                    trades_local = resp_local.trades or []
+                    if not trades_local:
+                        break
+                    for trade in trades_local:
+                        yield trade
+                    offset_local += chunk_size
+
+            def iter_by_close(inner_model_id: int):
+                offset_local = 0
+                while True:
+                    resp_local = child_client.get_trade_history(
+                        model_id=inner_model_id,
+                        ts_close_start=start,
+                        limit=chunk_size,
+                        offset=offset_local,
+                        order_by="ts_close",
+                        order="asc",
+                    )
+                    trades_local = resp_local.trades or []
+                    if not trades_local:
+                        break
+                    for trade in trades_local:
+                        if trade.ts_close:
+                            yield trade
+                    offset_local += chunk_size
+
+            model_rows: List[Dict[str, Any]] = []
+
+            for t in iter_by_open(model_id):
+                model_rows.append({
+                    "model": t.model_id,
+                    "instrument": meta.get("instrument"),
+                    "entry_granularity": meta.get("entry_granularity"),
+                    "ts": t.ts_open,
+                    "type": "open",
+                    "trade": t.trade_type,
+                    "tp": t.tp_price,
+                    "sl": t.sl_price,
+                    "price": t.open_price,
+                    "pip": 0.0,
+                })
+                open_rows_count += 1
+
+            for t in iter_by_close(model_id):
+                model_rows.append({
+                    "model": t.model_id,
+                    "instrument": meta.get("instrument"),
+                    "entry_granularity": meta.get("entry_granularity"),
+                    "ts": t.ts_close,
+                    "type": "close",
+                    "trade": t.trade_type,
+                    "tp": 0.0,
+                    "sl": 0.0,
+                    "price": t.close_price,
+                    "pip": t.pips,
+                })
+                close_rows_count += 1
+
+            logger.info(
+                f"get_trade_events: model {model_id} done; opens={open_rows_count}, closes={close_rows_count}, rows={len(model_rows)}"
+            )
+            return model_rows
+
+        rows: List[Dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            logger.info(
+                f"get_trade_events: dispatching tasks with max_workers={max_workers}"
+            )
+            futures = [
+                executor.submit(fetch_model_rows, model_id, meta)
+                for model_id, meta in id_to_meta.items()
+            ]
+            completed = 0
+            for future in as_completed(futures):
+                result_rows = future.result()
+                rows.extend(result_rows)
+                completed += 1
+                logger.info(
+                    f"get_trade_events: completed {completed}/{total_models} models; +{len(result_rows)} rows (total {len(rows)})"
+                )
+
+        rows.sort(key=lambda r: (r["ts"] is None, r["ts"]))
+        logger.info(f"get_trade_events: done; total rows={len(rows)}")
+        return rows
+
