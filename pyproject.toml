@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lukrum-models-client"
+version = "0.1.0"
+description = "Python client for the Lukrum FX Models API"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Oliver" }
+]
+dependencies = [
+  "requests",
+  "python-dotenv",
+  "lukrum-lib @ git+https://github.com/barebackpenguin/Lukrum_Lib.git",
+]
+
+[tool.setuptools]
+package-dir = { "lukrum_models_client" = "." }
+
+packages = [
+  "lukrum_models_client",
+]
