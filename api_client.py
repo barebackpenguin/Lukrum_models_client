@@ -192,7 +192,7 @@ class LukrumModelsAPIClient(BaseAPIClient):
         response = self._make_request('GET', '/observations', params=params)
         observations_data = _unwrap_list(response, 'observations')
         
-        return [Observation(**obs_data) for obs_data in observations_data]
+        return [Observation.from_dict(obs_data) for obs_data in observations_data]
     
     def create_observation(self, observation_request: ObservationCreateRequest) -> Dict[str, Any]:
         """
@@ -217,7 +217,7 @@ class LukrumModelsAPIClient(BaseAPIClient):
             Observation object
         """
         response = self._make_request('GET', f'/observations/{observation_id}')
-        return Observation(**response)
+        return Observation.from_dict(response)
     
     def update_observation(self, observation_id: int, update_request: ObservationUpdateRequest) -> Dict[str, Any]:
         """
@@ -263,7 +263,7 @@ class LukrumModelsAPIClient(BaseAPIClient):
         response = self._make_request('GET', '/properties', params=params)
         properties_data = _unwrap_list(response, 'properties')
         
-        return [Property(**prop_data) for prop_data in properties_data]
+        return [Property.from_dict(prop_data) for prop_data in properties_data]
     
     def create_property(self, property_request: PropertyCreateRequest) -> Dict[str, Any]:
         """
@@ -288,7 +288,7 @@ class LukrumModelsAPIClient(BaseAPIClient):
             Property object
         """
         response = self._make_request('GET', f'/properties/{property_id}')
-        return Property(**response)
+        return Property.from_dict(response)
     
     def update_property(self, property_id: int, update_request: PropertyUpdateRequest) -> Dict[str, Any]:
         """
@@ -327,7 +327,7 @@ class LukrumModelsAPIClient(BaseAPIClient):
         response = self._make_request('GET', '/property_types')
         property_types_data = _unwrap_list(response, 'property_types')
         
-        return [PropertyType(**pt_data) for pt_data in property_types_data]
+        return [PropertyType.from_dict(pt_data) for pt_data in property_types_data]
     
     def get_property_type(self, property_type_id: int) -> PropertyType:
         """
@@ -340,7 +340,7 @@ class LukrumModelsAPIClient(BaseAPIClient):
             PropertyType object
         """
         response = self._make_request('GET', f'/property_types/{property_type_id}')
-        return PropertyType(**response)
+        return PropertyType.from_dict(response)
     
     # Trade History endpoints
     
