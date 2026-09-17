@@ -23,6 +23,14 @@ from lukrum_lib.dto.models_api_dto import (
 
 logger = logging.getLogger(__name__)
 
+
+def _unwrap_list(response, key: str) -> list:
+    """Some list endpoints wrap results as {key: [...]}, others return a bare list."""
+    if isinstance(response, list):
+        return response
+    return response.get(key, [])
+
+
 class LukrumModelsAPIClient(BaseAPIClient):
     """
     Client for the Lukrum FX Models API.
@@ -79,7 +87,7 @@ class LukrumModelsAPIClient(BaseAPIClient):
             params['exit_granularity'] = exit_granularity
         
         response = self._make_request('GET', '/models', params=params)
-        models_data = response.get('models', [])
+        models_data = _unwrap_list(response, 'models')
         
         return [Model.from_dict(model_data) if hasattr(Model, 'from_dict') else Model(**model_data) for model_data in models_data]
     
@@ -153,7 +161,7 @@ class LukrumModelsAPIClient(BaseAPIClient):
             List of entry granularities
         """
         response = self._make_request('GET', '/models/entry_granularities')
-        return response.get('entry_granularities', [])
+        return _unwrap_list(response, 'entry_granularities')
     
     def get_exit_granularities(self) -> List[str]:
         """
@@ -163,7 +171,7 @@ class LukrumModelsAPIClient(BaseAPIClient):
             List of exit granularities
         """
         response = self._make_request('GET', '/models/exit_granularities')
-        return response.get('exit_granularities', [])
+        return _unwrap_list(response, 'exit_granularities')
     
     # Observations endpoints
     
@@ -182,7 +190,7 @@ class LukrumModelsAPIClient(BaseAPIClient):
             params['model_id'] = model_id
         
         response = self._make_request('GET', '/observations', params=params)
-        observations_data = response.get('observations', [])
+        observations_data = _unwrap_list(response, 'observations')
         
         return [Observation(**obs_data) for obs_data in observations_data]
     
@@ -253,7 +261,7 @@ class LukrumModelsAPIClient(BaseAPIClient):
             params['model_id'] = model_id
         
         response = self._make_request('GET', '/properties', params=params)
-        properties_data = response.get('properties', [])
+        properties_data = _unwrap_list(response, 'properties')
         
         return [Property(**prop_data) for prop_data in properties_data]
     
@@ -317,7 +325,7 @@ class LukrumModelsAPIClient(BaseAPIClient):
             List of PropertyType objects
         """
         response = self._make_request('GET', '/property_types')
-        property_types_data = response.get('property_types', [])
+        property_types_data = _unwrap_list(response, 'property_types')
         
         return [PropertyType(**pt_data) for pt_data in property_types_data]
     
@@ -439,7 +447,7 @@ class LukrumModelsAPIClient(BaseAPIClient):
             except Exception:
                 return None
 
-        trades_data = response.get('trades', [])
+        trades_data = _unwrap_list(response, 'trades')
         parsed_trades: List[TradeHistory] = []
         for trade_data in trades_data:
             # Copy to avoid mutating original
@@ -473,8 +481,9 @@ class LukrumModelsAPIClient(BaseAPIClient):
             else:
                 parsed_trades.append(TradeHistory(**td))
         
+        count = len(trades_data) if isinstance(response, list) else response.get('count', 0)
         return TradeHistoryResponse(
-            count=response.get('count', 0),
+            count=count,
             trades=parsed_trades
         )
     
